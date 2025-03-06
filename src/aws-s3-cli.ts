@@ -13,6 +13,8 @@ import {
   PutObjectCommand,
   GetObjectCommand,
   DeleteObjectCommand,
+  GetBucketLocationCommand,
+  BucketLocationConstraint,
 } from "@aws-sdk/client-s3";
 import { fromEnv } from "@aws-sdk/credential-providers";
 import { createReadStream, createWriteStream, readFileSync } from "fs";
@@ -56,9 +58,22 @@ const argv = yargs(hideBin(process.argv))
   })
   // List buckets command
   .command("list-buckets", "List all S3 buckets", {}, listBuckets)
-  // Create bucket command
+  // Get bucket region command
   .command(
-    "create-bucket <name>",
+    "get-bucket-region",
+    "Get the region of a specific bucket",
+    {
+      name: {
+        description: "Name of the bucket",
+        type: "string",
+        demandOption: true,
+      },
+    },
+    getBucketRegion
+  )
+  // Create bucket command - FIXED to use option instead of positional arg
+  .command(
+    "create-bucket",
     "Create a new S3 bucket",
     {
       name: {
@@ -69,9 +84,9 @@ const argv = yargs(hideBin(process.argv))
     },
     createBucket
   )
-  // Delete bucket command
+  // Delete bucket command - FIXED to use option instead of positional arg
   .command(
-    "delete-bucket <name>",
+    "delete-bucket",
     "Delete an S3 bucket",
     {
       name: {
@@ -82,9 +97,9 @@ const argv = yargs(hideBin(process.argv))
     },
     deleteBucket
   )
-  // List files command
+  // List files command - FIXED to use option instead of positional arg
   .command(
-    "list-files <bucket>",
+    "list-files",
     "List files in an S3 bucket",
     {
       bucket: {
@@ -99,9 +114,9 @@ const argv = yargs(hideBin(process.argv))
     },
     listFiles
   )
-  // Upload file command
+  // Upload file command - FIXED to use options instead of positional args
   .command(
-    "upload-file <bucket> <file> [key]",
+    "upload-file",
     "Upload a file to S3",
     {
       bucket: {
@@ -121,9 +136,9 @@ const argv = yargs(hideBin(process.argv))
     },
     uploadFile
   )
-  // Download file command
+  // Download file command - FIXED to use options instead of positional args
   .command(
-    "download-file <bucket> <key> [output]",
+    "download-file",
     "Download a file from S3",
     {
       bucket: {
@@ -143,9 +158,9 @@ const argv = yargs(hideBin(process.argv))
     },
     downloadFile
   )
-  // Delete file command
+  // Delete file command - FIXED to use options instead of positional args
   .command(
-    "delete-file <bucket> <key>",
+    "delete-file",
     "Delete a file from S3",
     {
       bucket: {
@@ -171,8 +186,12 @@ const argv = yargs(hideBin(process.argv))
  * Create an S3 client with the provided region and credentials
  */
 function getS3Client(region: string): S3Client {
+  // Log the region to debug
+  console.log(`Creating S3 client with region: ${region}`);
+
+  // Make sure we're explicitly setting the region
   return new S3Client({
-    region,
+    region: region,
     credentials: fromEnv(),
   });
 }
@@ -182,11 +201,20 @@ function getS3Client(region: string): S3Client {
  */
 async function listBuckets(argv: any) {
   try {
+    console.log(`Using region parameter: ${argv.region}`);
     const client = getS3Client(argv.region);
+
     const command = new ListBucketsCommand({});
+    console.log("Sending ListBucketsCommand...");
+
     const response = await client.send(command);
 
-    console.log(`Buckets in region ${argv.region}:`);
+    console.log(
+      "NOTE: S3 ListBucketsCommand returns ALL buckets regardless of region!"
+    );
+    console.log(
+      `Listing all buckets (use get-bucket-region to check actual region):`
+    );
 
     if (response.Buckets && response.Buckets.length > 0) {
       response.Buckets.forEach((bucket, index) => {
@@ -199,6 +227,42 @@ async function listBuckets(argv: any) {
     }
   } catch (error) {
     console.error("Error listing buckets:", error);
+    process.exit(1);
+  }
+}
+
+/**
+ * Get the region of a specific bucket
+ */
+async function getBucketRegion(argv: any) {
+  try {
+    // We need to use a specific region to make this API call
+    // us-east-1 is a good default for this specific command
+    const client = new S3Client({
+      region: "us-east-1",
+      credentials: fromEnv(),
+    });
+
+    console.log(`Checking region for bucket: ${argv.name}`);
+
+    // Use GetBucketLocation to get the actual bucket region
+    const command = new GetBucketLocationCommand({
+      Bucket: argv.name,
+    });
+
+    const response = await client.send(command);
+
+    // Parse the location constraint
+    let region = response.LocationConstraint;
+
+    // Empty string or null means us-east-1 (legacy S3 behavior)
+    if (!region) {
+      region = "us-east-1" as BucketLocationConstraint;
+    }
+
+    console.log(`Bucket '${argv.name}' is in region: ${region}`);
+  } catch (error) {
+    console.error(`Error getting region for bucket '${argv.name}':`, error);
     process.exit(1);
   }
 }
